@@ -4,7 +4,6 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <meta http-equiv="Content-Security-Policy" content="default-src * data: gap: content: https://ssl.gstatic.com; style-src * 'unsafe-inline'; script-src * 'unsafe-inline' 'unsafe-eval'">
-    <script src="cordova.js"></script>
     <script src="components/loader.js"></script>
     <link rel="stylesheet" href="components/loader.css">
     <link rel="stylesheet" href="css/style.css">
@@ -14,15 +13,100 @@
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
     <script src="www/config.js"></script>
-    <script src="js/utils.js"></script>
+
+    <style>
+        /* 背景画像の設定 */
+        body {
+            background: linear-gradient(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.9)),
+                        url('https://images.unsplash.com/photo-1534088568595-a066f410bcda?w=1920&h=1080&fit=crop') center/cover fixed;
+            min-height: 100vh;
+        }
+
+        /* ヘッダースタイル */
+        .app-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .app-header h1 {
+            margin: 0;
+            color: #667eea;
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn-nav {
+            padding: 0.5rem 1rem;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .btn-nav:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .nav-icon {
+            font-size: 1.2rem;
+        }
+
+        /* 投稿時のアニメーション */
+        @keyframes sendAnimation {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        .sending {
+            animation: sendAnimation 0.3s ease;
+        }
+    </style>
 
     <script>
 let postsRef;
 let postsListener = null;
-// 現在の編集対象のID
 let currentEditId = null;
-// ログイン中のユーザ
 let currentUser = null;
+
+// 通知音を再生する関数
+function playNotificationSound() {
+    // Web Audio APIを使用して通知音を生成
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    // 音の設定
+    oscillator.frequency.value = 800; // 周波数
+    oscillator.type = 'sine'; // 波形
+    
+    // 音量の設定（フェードアウト）
+    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+    
+    // 再生
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.5);
+}
 
 // メッセージ表示処理
 function showMessage(message, type = 'success') {
@@ -32,8 +116,6 @@ function showMessage(message, type = 'success') {
             ${message}
         </div>
     `);
-
-    // 3秒後にメッセージを消す
     setTimeout(() => {
         messageArea.empty();
     }, 3000);
@@ -41,7 +123,6 @@ function showMessage(message, type = 'success') {
 
 // 認証エラーメッセージの日本語化
 function getAuthErrorMessage(error) {
-    // エラーコードがある場合
     if (error.code) {
         return `認証エラーが発生しました（${error.code}）`;
     } else if (error.message) {
@@ -98,40 +179,6 @@ function validateAuthInput(email, password, isRegister = false) {
     return true;
 }
 
-// 投稿処理
-function createPost(author, content) {
-    if (!currentUser) {
-        showMessage('投稿するにはログインが必要です', 'error');
-        return;
-    }
-
-    if (!validateContent(content)) return;
-
-    const button = $('#postButton');
-    button.prop('disabled', true);
-
-    // author はログインしているユーザのメールアドレスに変更、userId を追加
-    const postData = {
-        author: currentUser.email,
-        content: content,
-        timestamp: firebase.database.ServerValue.TIMESTAMP,
-        userId: currentUser.uid
-    };
-
-    postsRef.push(postData)
-    .then(() => {
-        showMessage('投稿が完了しました！');
-        $('#contentInput').val('');
-        updateCharacterCount('contentInput', 'contentCount', 1000);
-    })
-    .catch((error) => {
-        showMessage('投稿に失敗しました：' + error.message, 'error');
-    })
-    .finally(() => {
-        button.prop('disabled', false);
-    });
-}
-
 // HTMLエスケープ処理
 function escapeHtml(str) {
     if (!str) return '';
@@ -143,16 +190,76 @@ function escapeHtml(str) {
         .replace(/'/g, '&#039;');
 }
 
-// タイムスタンプのフォーマット
-function formatTimestamp(timestamp) {
+// タイムスタンプのフォーマット（相対時間）
+function getRelativeTime(timestamp) {
+    const now = Date.now();
+    const diff = now - timestamp;
+    
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    
+    if (minutes < 1) return 'たった今';
+    if (minutes < 60) return `${minutes}分前`;
+    if (hours < 24) return `${hours}時間前`;
+    if (days < 7) return `${days}日前`;
+    
+    // 7日以上前は日付表示
     const date = new Date(timestamp);
-    return date.toLocaleString('ja-JP', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
+    return date.toLocaleDateString('ja-JP');
+}
+
+// ユーザープロフィール取得
+async function getUserProfile(userId) {
+    try {
+        const snapshot = await firebase.database()
+            .ref(`users/${userId}`)
+            .once('value');
+        return snapshot.val();
+    } catch (error) {
+        console.error('Error getting user profile:', error);
+        return null;
+    }
+}
+
+// 投稿処理
+async function createPost(author, content) {
+    if (!currentUser) {
+        showMessage('投稿するにはログインが必要です', 'error');
+        return;
+    }
+
+    if (!validateContent(content)) return;
+
+    const button = $('#postButton');
+    button.prop('disabled', true);
+    button.addClass('sending');
+
+    try {
+        const userProfile = await getUserProfile(currentUser.uid);
+        
+        const postData = {
+            author: currentUser.email,
+            authorDisplayName: userProfile?.displayName || currentUser.email.split('@')[0],
+            content: content,
+            timestamp: firebase.database.ServerValue.TIMESTAMP,
+            userId: currentUser.uid
+        };
+
+        await postsRef.push(postData);
+        
+        // 通知音を再生
+        playNotificationSound();
+        
+        showMessage('投稿が完了しました！');
+        $('#contentInput').val('');
+        updateCharacterCount('contentInput', 'contentCount', 1000);
+    } catch (error) {
+        showMessage('投稿に失敗しました：' + error.message, 'error');
+    } finally {
+        button.prop('disabled', false);
+        button.removeClass('sending');
+    }
 }
 
 // 投稿の編集権限チェック
@@ -161,11 +268,8 @@ function canEditPost(post) {
 }
 
 // 投稿のHTML要素を生成
-// 　バグ入りなので要修正（編集・削除機能表示判定が誤っている）
 function createPostElement(post) {
-    // 編集権限を確認
     const canEdit = canEditPost(post);
-    // 編集権限があれば、編集・削除機能を表示
     const actions = canEdit ? `
         <div class="post-actions">
             <button class="btn-edit" onclick="startEdit('${post.id}')">
@@ -180,8 +284,9 @@ function createPostElement(post) {
     return `
         <div class="post" id="post-${post.id}">
             <div class="post-header">
-                <span class="post-author">${escapeHtml(post.author)}</span>
-                <!-- 編集権限があれば、編集・削除機能を表示 -->
+                <span class="post-author">
+                    ${escapeHtml(post.authorDisplayName || post.author)}
+                </span>
                 ${actions}
             </div>
             <div class="post-content">${escapeHtml(post.content)}</div>
@@ -198,11 +303,11 @@ function createPostElement(post) {
             </div>
             <div class="post-footer">
                 <span class="post-time">
-                    ${formatTimestamp(post.timestamp)}
+                    ${getRelativeTime(post.timestamp)}
                 </span>
                 ${post.updatedAt ? `
                     <span class="post-updated">
-                        (編集済み: ${formatTimestamp(post.updatedAt)})
+                        (編集済み)
                     </span>
                 ` : ''}
             </div>
@@ -230,13 +335,11 @@ function loadPosts() {
     const sortOrder = $('#sortOrder').val();
     $('#loadingSpinner').show();
 
-    // 既存のリスナーを解除
     if (postsListener) {
         postsRef.off('value', postsListener);
         postsListener = null;
     }
 
-    // リスナーを設定
     postsListener = postsRef.on('value', (snapshot) => {
         const posts = [];
         snapshot.forEach((childSnapshot) => {
@@ -246,7 +349,6 @@ function loadPosts() {
             });
         });
 
-        // 並び順の適用
         if (sortOrder === 'newest') {
             posts.sort((a, b) => b.timestamp - a.timestamp);
         } else {
@@ -316,21 +418,6 @@ function handleDelete() {
     });
 }
 
-// モーダルの外側をクリックした時の処理
-$(document).on('click', '.modal-overlay', () => {
-    const modalId = $(this).parent().attr('id');
-    closeModal(modalId);
-});
-
-// ESCキーでモーダルを閉じる
-$(document).on('keydown', (e) => {
-    if (e.key === 'Escape') {
-        $('.modal:visible').each(() => {
-            closeModal(this.id);
-        });
-    }
-});
-
 // 編集の開始
 function startEdit(postId) {
     currentEditId = postId;
@@ -354,7 +441,6 @@ function updatePost(postId) {
     const contentVal = $(`#edit-${postId}`).val();
     if (!validateContent(contentVal)) return;
 
-    // content の内容を変更し、updatedAt フィールドを付加して、更新後の投稿内容を生成
     const updates = {
         content: contentVal,
         updatedAt: firebase.database.ServerValue.TIMESTAMP
@@ -444,7 +530,6 @@ function clearAuthForm() {
 }
 
 // UI更新
-// 　バグ入りなので要修正（emailアドレスを表示するべきところを uid を表示してしまっている）
 function updateUI(user) {
     if (user) {
         $('.logged-in').show();
@@ -455,6 +540,15 @@ function updateUI(user) {
         $('.logged-out').show();
         $('#userEmail').text('');
     }
+}
+
+// プロフィールページに移動
+function goToProfile() {
+    if (!currentUser) {
+        showMessage('プロフィールを見るにはログインが必要です', 'error');
+        return;
+    }
+    location.href = 'profile.html';
 }
 
 $(function() {
@@ -473,17 +567,15 @@ $(function() {
         currentUser = user;
         updateUI(user);
         loadPosts();
-     });
+    });
 
     // 文字数カウンターの初期化
     updateCharacterCount('contentInput', 'contentCount', 1000);
 
-    // 投稿処理
+    // イベントリスナー
     $('#postButton').on('click', () => {
-        // 投稿内容をフォームから取得
-        const authorVal = $('#authorInput').val();
         const contentVal = $('#contentInput').val();
-        createPost(authorVal, contentVal);
+        createPost('', contentVal);
     });
 
     $('#loginButton').on('click', () => {
@@ -499,12 +591,24 @@ $(function() {
     });
 
     $('#logoutButton').on('click', logout);
-
-    // 投稿一覧表示順序選択
     $('#sortOrder').on('change', loadPosts);
 
-    // 投稿一覧の初期読み込み
-    loadPosts();
+    // モーダルの外側クリックで閉じる
+    $(document).on('click', '.modal-overlay', function(e) {
+        if (e.target === this) {
+            const modalId = $(this).parent().attr('id');
+            closeModal(modalId);
+        }
+    });
+
+    // ESCキーでモーダルを閉じる
+    $(document).on('keydown', (e) => {
+        if (e.key === 'Escape') {
+            $('.modal:visible').each(function() {
+                closeModal(this.id);
+            });
+        }
+    });
 });
 
 // クリーンアップ処理
@@ -518,18 +622,15 @@ window.addEventListener('unload', () => {
 </head>
 <body>
     <div class="container">
+        <!-- ヘッダー -->
         <div class="app-header">
-    <h1>掲示板アプリ</h1>
-    <div class="nav-buttons logged-in">
-        <button onclick="location.href='profile.html'" class="btn-nav">
-            <span class="nav-icon">👤</span> プロフィール
-        </button>
-        <button onclick="location.href='notifications.html'" class="btn-nav">
-            <span class="nav-icon">🔔</span> 通知
-            <span id="notificationBadge" class="badge" style="display: none;">0</span>
-        </button>
-    </div>
-</div>
+            <h1>🌤️ SNS掲示板</h1>
+            <div class="nav-buttons logged-in">
+                <button onclick="goToProfile()" class="btn-nav">
+                    <span class="nav-icon">👤</span> プロフィール
+                </button>
+            </div>
+        </div>
 
         <!-- メッセージ表示エリア -->
         <div id="messageArea"></div>
@@ -564,11 +665,11 @@ window.addEventListener('unload', () => {
             <div class="form-group">
                 <label for="contentInput">投稿内容</label>
                 <textarea id="contentInput" class="form-control"
-                          placeholder="投稿内容を入力してください"></textarea>
+                          placeholder="今何してる？"></textarea>
                 <small class="character-count" id="contentCount">0/1000</small>
             </div>
             <div class="button-group">
-                <button id="postButton" class="btn-primary">投稿する</button>
+                <button id="postButton" class="btn-primary">📮 投稿する</button>
             </div>
         </div>
 
