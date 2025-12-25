@@ -1,0 +1,446 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta http-equiv="Content-Security-Policy" content="default-src * data: gap: content: https://ssl.gstatic.com; style-src * 'unsafe-inline'; script-src * 'unsafe-inline' 'unsafe-eval'">
+    <script src="components/loader.js"></script>
+    <link rel="stylesheet" href="components/loader.css">
+    <link rel="stylesheet" href="css/style.css">
+
+    <!-- Firebase SDKの読み込み -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+    <script src="www/config.js"></script>
+
+    <style>
+        /* 背景画像 */
+        body {
+            background: linear-gradient(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.9)),
+                        url('https://images.unsplash.com/photo-1534088568595-a066f410bcda?w=1920&h=1080&fit=crop') center/cover fixed;
+            min-height: 100vh;
+        }
+
+        .profile-container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn-back {
+            padding: 0.5rem 1rem;
+            background: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+
+        .btn-back:hover {
+            background: #5a6268;
+        }
+
+        .profile-header {
+            background: white;
+            border-radius: 8px;
+            padding: 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 1rem;
+        }
+
+        .avatar-container {
+            flex-shrink: 0;
+        }
+
+        .avatar {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            color: white;
+            font-weight: bold;
+        }
+
+        .profile-info {
+            flex: 1;
+        }
+
+        .profile-info h2 {
+            margin: 0 0 0.5rem 0;
+            color: #333;
+        }
+
+        .text-muted {
+            color: #6c757d;
+            font-size: 0.9rem;
+            margin: 0.25rem 0;
+        }
+
+        .profile-stats {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 1rem;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-number {
+            display: block;
+            font-size: 2rem;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            display: block;
+            font-size: 0.9rem;
+            color: #6c757d;
+            margin-top: 0.25rem;
+        }
+
+        .profile-bio {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 1rem;
+        }
+
+        .profile-bio h3 {
+            margin: 0 0 1rem 0;
+            color: #333;
+            font-size: 1.1rem;
+        }
+
+        .profile-bio p {
+            color: #555;
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }
+
+        .profile-actions {
+            text-align: center;
+        }
+
+        @media (max-width: 600px) {
+            .profile-header {
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+            }
+            
+            .avatar {
+                width: 80px;
+                height: 80px;
+                font-size: 2.5rem;
+            }
+        }
+    </style>
+
+    <script>
+let currentUser = null;
+let userProfile = null;
+
+// メッセージ表示
+function showMessage(message, type = 'success') {
+    const messageArea = $('#messageArea');
+    messageArea.html(`
+        <div class="message ${type}">
+            ${message}
+        </div>
+    `);
+    setTimeout(() => messageArea.empty(), 3000);
+}
+
+// 文字数カウント
+function updateCharacterCount(inputId, counterId, maxLength) {
+    const input = $(`#${inputId}`);
+    const counter = $(`#${counterId}`);
+    
+    input.on('input', () => {
+        const length = input.val().length;
+        counter.text(`${length}/${maxLength}`);
+        if (length > maxLength) {
+            counter.addClass('error');
+        } else {
+            counter.removeClass('error');
+        }
+    });
+    
+    // 初期値を設定
+    const length = input.val().length;
+    counter.text(`${length}/${maxLength}`);
+}
+
+// プロフィールの読み込み
+async function loadProfile() {
+    if (!currentUser) return;
+    
+    try {
+        const snapshot = await firebase.database()
+            .ref(`users/${currentUser.uid}`)
+            .once('value');
+        
+        userProfile = snapshot.val();
+        
+        if (!userProfile) {
+            // プロフィールが存在しない場合は初期化
+            await initializeProfile();
+        } else {
+            displayProfile(userProfile);
+        }
+        
+        // 投稿数を取得
+        await loadUserStats();
+    } catch (error) {
+        console.error('Error loading profile:', error);
+        showMessage('プロフィールの読み込みに失敗しました', 'error');
+    }
+}
+
+// プロフィールの初期化
+async function initializeProfile() {
+    const defaultProfile = {
+        displayName: currentUser.email.split('@')[0],
+        bio: '',
+        createdAt: firebase.database.ServerValue.TIMESTAMP
+    };
+    
+    try {
+        await firebase.database()
+            .ref(`users/${currentUser.uid}`)
+            .set(defaultProfile);
+        
+        userProfile = defaultProfile;
+        displayProfile(userProfile);
+    } catch (error) {
+        console.error('Error initializing profile:', error);
+    }
+}
+
+// プロフィールの表示
+function displayProfile(profile) {
+    $('#displayName').text(profile.displayName || 'Unknown User');
+    $('#userEmail').text(currentUser.email);
+    $('#bioDisplay').text(profile.bio || '未設定');
+    
+    // アバターのイニシャル表示
+    const initial = (profile.displayName || currentUser.email).charAt(0).toUpperCase();
+    $('#avatarInitial').text(initial);
+    
+    // 登録日
+    if (profile.createdAt) {
+        const joinDate = new Date(profile.createdAt).toLocaleDateString('ja-JP');
+        $('#joinDate').text(`登録日: ${joinDate}`);
+    }
+}
+
+// ユーザー統計の読み込み
+async function loadUserStats() {
+    try {
+        // 投稿数
+        const postsSnapshot = await firebase.database()
+            .ref('posts')
+            .orderByChild('userId')
+            .equalTo(currentUser.uid)
+            .once('value');
+        $('#postCount').text(postsSnapshot.numChildren());
+    } catch (error) {
+        console.error('Error loading user stats:', error);
+    }
+}
+
+// プロフィール編集モーダルを開く
+function openEditModal() {
+    $('#editDisplayName').val(userProfile?.displayName || '');
+    $('#editBio').val(userProfile?.bio || '');
+    
+    updateCharacterCount('editDisplayName', 'nameCount', 30);
+    updateCharacterCount('editBio', 'bioCount', 200);
+    
+    $('#editProfileModal').fadeIn(200);
+}
+
+// プロフィール編集モーダルを閉じる
+function closeEditModal() {
+    $('#editProfileModal').fadeOut(200);
+}
+
+// プロフィールの保存
+async function saveProfile() {
+    const displayName = $('#editDisplayName').val().trim();
+    const bio = $('#editBio').val().trim();
+    
+    if (!displayName) {
+        showMessage('表示名を入力してください', 'error');
+        return;
+    }
+    
+    if (displayName.length > 30) {
+        showMessage('表示名は30文字以内で入力してください', 'error');
+        return;
+    }
+    
+    if (bio.length > 200) {
+        showMessage('自己紹介は200文字以内で入力してください', 'error');
+        return;
+    }
+    
+    try {
+        const updates = {
+            displayName: displayName,
+            bio: bio
+        };
+        
+        // 新規作成の場合は createdAt を追加
+        if (!userProfile || !userProfile.createdAt) {
+            updates.createdAt = firebase.database.ServerValue.TIMESTAMP;
+        }
+        
+        await firebase.database()
+            .ref(`users/${currentUser.uid}`)
+            .update(updates);
+        
+        userProfile = { ...userProfile, ...updates };
+        displayProfile(userProfile);
+        closeEditModal();
+        showMessage('プロフィールを更新しました');
+    } catch (error) {
+        console.error('Error saving profile:', error);
+        showMessage('プロフィールの更新に失敗しました', 'error');
+    }
+}
+
+// 初期化
+$(function() {
+    // Firebaseの初期化
+    try {
+        firebase.initializeApp(firebaseConfig);
+        console.log("Firebase initialized successfully");
+    } catch (error) {
+        console.error("Firebase initialization error:", error);
+        showMessage('Firebaseの初期化に失敗しました', 'error');
+    }
+    
+    // 認証状態の監視
+    firebase.auth().onAuthStateChanged((user) => {
+        currentUser = user;
+        if (user) {
+            loadProfile();
+        } else {
+            location.href = 'index.html';
+        }
+    });
+    
+    // イベントリスナー
+    $('#editProfileBtn').on('click', openEditModal);
+    
+    // モーダルの外側クリックで閉じる
+    $(document).on('click', '.modal-overlay', function(e) {
+        if (e.target === this) {
+            closeEditModal();
+        }
+    });
+    
+    // ESCキーでモーダルを閉じる
+    $(document).on('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeEditModal();
+        }
+    });
+});
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="profile-container">
+            <div class="header">
+                <button onclick="location.href='index.html'" class="btn-back">← 戻る</button>
+                <h1>プロフィール</h1>
+            </div>
+
+            <div id="messageArea"></div>
+
+            <div class="profile-header">
+                <div class="avatar-container">
+                    <div class="avatar">
+                        <span id="avatarInitial"></span>
+                    </div>
+                </div>
+                <div class="profile-info">
+                    <h2 id="displayName">読み込み中...</h2>
+                    <p id="userEmail" class="text-muted"></p>
+                    <p id="joinDate" class="text-muted"></p>
+                </div>
+            </div>
+
+            <div class="profile-stats">
+                <div class="stat-item">
+                    <span class="stat-number" id="postCount">0</span>
+                    <span class="stat-label">投稿</span>
+                </div>
+            </div>
+
+            <div class="profile-bio">
+                <h3>自己紹介</h3>
+                <p id="bioDisplay">未設定</p>
+            </div>
+
+            <div class="profile-actions">
+                <button id="editProfileBtn" class="btn-primary">プロフィールを編集</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- プロフィール編集モーダル -->
+    <div id="editProfileModal" class="modal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>プロフィールを編集</h3>
+                <button class="modal-close" onclick="closeEditModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="editDisplayName">表示名</label>
+                    <input type="text" id="editDisplayName" class="form-control" maxlength="30">
+                    <small class="character-count" id="nameCount">0/30</small>
+                </div>
+                <div class="form-group">
+                    <label for="editBio">自己紹介</label>
+                    <textarea id="editBio" class="form-control" maxlength="200" rows="4"></textarea>
+                    <small class="character-count" id="bioCount">0/200</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="saveProfile()" class="btn-primary">保存</button>
+                <button onclick="closeEditModal()" class="btn-cancel">キャンセル</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
